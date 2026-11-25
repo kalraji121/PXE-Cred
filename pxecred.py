@@ -29,9 +29,11 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.serialization import pkcs12
 from Crypto.Cipher import DES3
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 DEFAULT_MEDIA_PASSWORD = "{BAC6E688-DE21-4ABE-B7FB-C9F54E6DB664}"
+MEDIA_MAGIC = b"\x00\x00\xed\xec"
+MEDIA_ALG_AES128 = b"\x0e\x66\x00\x00"
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +104,26 @@ def decrypt_media_variables(boot_var: Path, password: str) -> str:
     except Exception as exc:
         raise SystemExit(f"Decrypted media variables are not valid XML: {exc}")
     return text
+
+
+def generate_hashcat_hash(media_file: Path) -> str:
+    """Return the Hashcat mode 19850 hash for a PXE media variables file."""
+    raw = media_file.read_bytes()
+    header = raw[:40]
+    if len(header) < 40:
+        raise SystemExit(f"Media variables file is too small: {media_file}")
+    if header[:4] == b"regf":
+        raise SystemExit(
+            f"{media_file} is a Windows registry hive (BCD), not an encrypted "
+            "ConfigMgr media variables file; there is no $sccm$aes128$ hash in it. "
+            "Use the .boot.var or another media variables file."
+        )
+    if header[:4] != MEDIA_MAGIC or header[16:20] != MEDIA_ALG_AES128:
+        raise SystemExit(
+            f"{media_file} does not have the ConfigMgr AES-128 media variables "
+            "header; use a .boot.var or another media variables file."
+        )
+    return "$sccm$aes128$" + header.hex()
 
 
 def parse_xml(text):
@@ -488,6 +510,8 @@ def main():
     parser.add_argument("--variables", help="PXE media variables XML (default: variables.xml if no --boot-var)")
     parser.add_argument("--boot-var", metavar="PATH",
                         help="Encrypted PXE media variables file (.boot.var); decrypt with --password")
+    parser.add_argument("--hashcat", metavar="PATH",
+                        help="Print the SCCM Hashcat mode-19850 hash for a media variables file and exit")
     parser.add_argument("--password", "--media-password", dest="media_password",
                         help="Password for --boot-var (default: built-in MECM media password)")
     parser.add_argument("--pfx", help="Media PFX (default: extract from variables to media.pfx)")
@@ -500,6 +524,13 @@ def main():
     parser.add_argument("--timeout", type=int, default=30)
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args()
+
+    if args.hashcat:
+        media_file = Path(args.hashcat).expanduser()
+        if not media_file.is_file():
+            raise SystemExit(f"media variables file not found: {media_file}")
+        print(generate_hashcat_hash(media_file))
+        return
 
     if args.boot_var and args.variables:
         parser.error("use either --boot-var or --variables, not both")

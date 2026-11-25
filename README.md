@@ -84,6 +84,29 @@ python pxecred.py \
 If the PFX password is the standard MECM media-GUID prefix, it is derived from
 `_SMSMediaGuid` automatically. Override it with `--pfx-password`.
 
+## Generate a Hashcat hash
+
+Print the SCCM Hashcat mode-19850 hash for an encrypted media variables file:
+
+```bash
+python pxecred.py --hashcat media.boot.var
+```
+
+Example:
+
+```text
+$sccm$aes128$0000edec1400000010340000203400000e66000000000000f4aa05d12d6facd1856ed8f2fe6cfa41
+```
+
+The hash is derived from the first 40 bytes of the media variables file. The
+downloaded `.boot.bcd` is a Windows registry hive (it starts with `regf`), not
+an encrypted media variables file, so it has no `$sccm$aes128$` hash. Use the
+`.boot.var` or another media variables file.
+
+Hashcat mode 19850 is not built into stock Hashcat; use the MWR CyberSec
+[ConfigMgr module](https://github.com/MWR-CyberSec/configmgr-cryptderivekey-hashcat-module)
+or a binary that includes it.
+
 Outputs are written to `pxecred-output/` by default:
 
 - `policy_assignments.xml` — policy assignment document
@@ -110,6 +133,7 @@ In TS Step "Apply Network Settings":
 | Option | Description |
 |---|---|
 | `--boot-var PATH` | Encrypted PXE media variables file (`.boot.var`) |
+| `--hashcat PATH` | Print the SCCM Hashcat mode-19850 hash for a media variables file and exit |
 | `--password VALUE` | Password for `--boot-var` (default: built-in MECM media password) |
 | `--variables PATH` | Already-decrypted PXE media variables XML |
 | `--pfx PATH` | Media PFX; if omitted, extracted from `_SMSTSMediaPFX` |

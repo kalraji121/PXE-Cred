@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.0
+
+- Added `--hashcat PATH` to print the SCCM Hashcat mode-19850 hash for a
+  `.boot.var`/media variables file and exit.
+- Validate the ConfigMgr AES-128 media header and reject non-variables files
+  with a clear error.
+
 ## 1.1.0
 
 - Native `.boot.var` media variables decryption with `--boot-var` and

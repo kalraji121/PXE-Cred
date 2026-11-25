@@ -23,9 +23,30 @@ class SmokeTest(unittest.TestCase):
         self.assertIn("--variables", result.stdout)
         self.assertIn("--boot-var", result.stdout)
         self.assertIn("--password", result.stdout)
+        self.assertIn("--hashcat", result.stdout)
 
 
 class MediaVariableDecryptTest(unittest.TestCase):
+    def test_generate_hashcat_hash(self):
+        header = bytes.fromhex(
+            "0000edec1400000010340000203400000e66000000000000"
+            "f4aa05d12d6facd1856ed8f2fe6cfa41"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            media = Path(directory) / "media.boot.var"
+            media.write_bytes(header + b"\x00" * 16)
+            self.assertEqual(
+                pxecred.generate_hashcat_hash(media),
+                "$sccm$aes128$" + header.hex(),
+            )
+
+    def test_bcd_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bcd = Path(directory) / "media.boot.bcd"
+            bcd.write_bytes(b"regf" + b"\x00" * 60)
+            with self.assertRaises(SystemExit):
+                pxecred.generate_hashcat_hash(bcd)
+
     def test_decrypts_boot_var(self):
         plaintext = (
             '<?xml version="1.0" encoding="UTF-16"?>'
