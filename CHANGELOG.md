@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.0
+
+- Native `.boot.var` media variables decryption with `--boot-var` and
+  `--password`, without Windows CryptoAPI or PXEThief.
+- Decrypted `variables.xml` is written to the output directory.
+- Built-in MECM media password fallback when `--password` is omitted.
+
 ## 1.0.0
 
 - Initial standalone release.

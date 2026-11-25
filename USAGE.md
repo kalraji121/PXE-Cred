@@ -2,19 +2,32 @@
 
 ## 1. Obtain the inputs
 
-`pxecred` starts after the PXE stage. You need:
+`pxecred` can start from either:
 
-- `variables.xml` — the decrypted media variables file
-- the media PFX (the file PXEThief writes as `<site>_<media-guid>_SMSTSMediaPFX.pfx`)
+- an encrypted PXE media variables file (`.boot.var`) and its PXE password, or
+- an already-decrypted `variables.xml`
 
-These are normally produced by PXEThief mode 1/2/3 (or mode 4 for standalone
-media). The extraction step is not included in `pxecred`; run it on Windows or a
-compatible platform first.
-
-If you do not pass `--pfx`, `pxecred` extracts `_SMSTSMediaPFX` from
-`variables.xml` and writes it to `<output>/media.pfx`.
+The DHCP/TFTP download is still outside `pxecred`; obtain the `.boot.var` from
+the distribution point with TFTP or another PXE extraction method. Once you have
+it, `pxecred` decrypts it natively on Linux/macOS and extracts the media PFX from
+`_SMSTSMediaPFX`.
 
 ## 2. Run
+
+Decrypt the media variables and retrieve policies in one step:
+
+```bash
+python3 pxecred.py \
+  --boot-var media.boot.var \
+  --password hello \
+  --mp http://192.168.0.41 \
+  --output findings
+```
+
+For unprotected media, omit `--password`; the built-in MECM media password is
+used.
+
+If you already have a decrypted `variables.xml`:
 
 ```bash
 python3 pxecred.py \
@@ -40,6 +53,8 @@ python3 pxecred.py --pfx custom.pfx --pfx-password '...'
 
 ```text
 findings/
+  variables.xml
+  media.pfx
   policy_assignments.xml
   policy_assignments.raw.xml
   NAAConfig.xml
@@ -50,8 +65,9 @@ findings/
   *.dec   # decrypted CMS payloads before XML cleanup
 ```
 
-Treat the entire output directory as sensitive. It can contain plaintext
-credentials and the media certificate.
+`variables.xml` is written only when `--boot-var` is used. Treat the entire
+output directory as sensitive. It can contain plaintext credentials and the
+media certificate.
 
 ## Signature modes
 
@@ -106,6 +122,7 @@ python3 -m unittest discover -s tests -v
 
 | Symptom | Check |
 |---|---|
+| `Failed to decrypt media variables` | Wrong `--password`, or the file is not a `.boot.var`; omit `--password` for default media |
 | `MPKEYINFORMATIONMEDIA failed` | Wrong `--mp`, DNS, firewall on 80/443 |
 | Policy request 401/500 | `--sig-mode`, `--hash sha1`, clock skew |
 | CMS decrypt failed | Wrong PFX/password; not the media certificate |

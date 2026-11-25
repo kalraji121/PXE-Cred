@@ -1,13 +1,13 @@
 # pxecred
 
-Cross-platform SCCM/MECM PXE policy credential extractor for Linux and macOS.
+Cross-platform SCCM/MECM PXE media and policy credential extractor for Linux and macOS.
 
 `pxecred` is a single-file, standalone alternative to the Windows-only
 `win32crypt` stage of [PXEThief](https://github.com/MWR-CyberSec/PXEThief).
-It consumes a PXE media variables XML file and its media PFX, retrieves the
-Network Access Account, Task Sequence, and Collection Variable policies from a
-Configuration Manager Management Point, and decrypts them without Windows
-CryptoAPI.
+It decrypts a saved PXE media variables file (`.boot.var`) with its media
+password, extracts the media PFX, retrieves the Network Access Account, Task
+Sequence, and Collection Variable policies from a Configuration Manager
+Management Point, and decrypts them without Windows CryptoAPI.
 
 > **Authorized use only.** This tool retrieves credentials and is intended for
 > penetration tests, red-team labs, and systems you own or have explicit written
@@ -19,6 +19,7 @@ PXEThief extracts the OSD media variables and PFX, but its policy retrieval and
 credential parsers depend on `win32crypt` and therefore run only on Windows.
 `pxecred` reimplements that stage with portable Python:
 
+- `.boot.var` media-variable decryption with the PXE media password
 - PFX loading via `cryptography`
 - MECM client token signatures via RSA PKCS#1 v1.5
 - `CCM_POST` policy retrieval
@@ -30,12 +31,14 @@ credential parsers depend on `win32crypt` and therefore run only on Windows.
 - Python 3.9+
 - Linux or macOS
 - Network access to the MECM Management Point
-- A PXE media `variables.xml` and its extracted media PFX
+- An encrypted PXE media variables file (`.boot.var`) and its password, or an
+  already-decrypted `variables.xml`
 
-The tool does **not** perform PXE/DHCP/TFTP extraction itself. Obtain the media
-variables and PFX with PXEThief (mode 1/2/3 on a supported platform) or an
-equivalent extraction method. `pxecred` can extract the PFX from
-`_SMSTSMediaPFX` in the variables XML if `--pfx` is omitted.
+The tool does **not** perform DHCP/TFTP acquisition itself. Download the
+`.boot.var`/BCD from the distribution point with TFTP or another PXE extraction
+method, then pass the `.boot.var` to `--boot-var`. If you already have a
+decrypted `variables.xml`, use `--variables` instead. The media PFX is extracted
+from `_SMSTSMediaPFX` automatically unless `--pfx` is supplied.
 
 ## Install
 
@@ -59,6 +62,17 @@ The tool is a single file; running `python pxecred.py` directly also works once
 the dependencies are installed.
 
 ## Quick start
+
+Decrypt the media variables and retrieve policies in one command:
+
+```bash
+python pxecred.py \
+  --boot-var media.boot.var \
+  --password hello \
+  --mp http://192.168.0.41
+```
+
+If you already have a decrypted `variables.xml` and PFX:
 
 ```bash
 python pxecred.py \
@@ -95,7 +109,9 @@ In TS Step "Apply Network Settings":
 
 | Option | Description |
 |---|---|
-| `--variables PATH` | PXE media variables XML (default `variables.xml`) |
+| `--boot-var PATH` | Encrypted PXE media variables file (`.boot.var`) |
+| `--password VALUE` | Password for `--boot-var` (default: built-in MECM media password) |
+| `--variables PATH` | Already-decrypted PXE media variables XML |
 | `--pfx PATH` | Media PFX; if omitted, extracted from `_SMSTSMediaPFX` |
 | `--pfx-password VALUE` | PFX password (default: first 31 chars of `_SMSMediaGuid`) |
 | `--mp URL` | Management Point base URL; default from `SMSTSMP`/`SMSTSLocationMPs` |
@@ -112,8 +128,10 @@ servers use for the client token signatures.
 
 ## How it works
 
-1. Read `variables.xml` and derive the media GUID.
-2. Load the media PFX with the derived password.
+1. If `--boot-var` is used, decrypt the media variables with the PXE password
+   (AES-128-CBC, CryptDeriveKey SHA-1 key derivation, 24-byte header and 8-byte
+   trailer removed); otherwise read `variables.xml`.
+2. Derive the media GUID and load the media PFX with its derived password.
 3. Fetch `x86UnknownMachineGUID` and the site code from
    `/SMS_MP/.sms_aut?MPKEYINFORMATIONMEDIA`.
 4. Sign the client ID, timestamp, and client token with the PFX private key.
@@ -125,6 +143,9 @@ servers use for the client token signatures.
 
 ## Troubleshooting
 
+- **`Failed to decrypt media variables; check the password`** — the
+  `--password` is wrong, or the file is not a PXE media variables `.boot.var`.
+  For unprotected media, omit `--password` to use the built-in MECM password.
 - **`MPKEYINFORMATIONMEDIA` fails / wrong host** — pass `--mp` explicitly,
   usually `http://<MECM-IP>`. A hostname from `SMSTSMP` may not resolve on your
   attack host.
@@ -141,9 +162,9 @@ servers use for the client token signatures.
 ## Credits and license
 
 `pxecred` is based on the PXEThief workflow and parser behavior by Christopher
-Panayi / [MWR CyberSec](https://github.com/MWR-CyberSec/PXEThief). The Windows
-CryptoAPI stage is reimplemented with portable Python. Because it derives from
-PXEThief, it is distributed under the **GNU General Public License v3.0**; see
-`LICENSE`.
+Panayi / [MWR CyberSec](https://github.com/MWR-CyberSec/PXEThief). The media
+variables decryption, Windows CryptoAPI stage, and certificate/policy handling
+are reimplemented with portable Python. Because it derives from PXEThief, it is
+distributed under the **GNU General Public License v3.0**; see `LICENSE`.
 
 No original PXEThief code is imported at runtime. `pxecred.py` is standalone.
